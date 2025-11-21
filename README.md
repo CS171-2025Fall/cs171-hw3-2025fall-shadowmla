@@ -1,7 +1,7 @@
 # Assignment 4: Global Illumination
 
-Name:  
-Student ID:  
+Name: Yufei Sun 
+Student ID: 2022533133 
 
 **Please write your Chinese name and your student ID in this README.**
 

@@ -1,5 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 project(CS171-assignment4 LANGUAGES C CXX)
+set(CMAKE_POLICY_VERSION_MINIMUM 3.5 CACHE STRING "Minimum CMake policy version for subprojects")
 # cmake_policy(SET CMP0135 NEW)
 
 find_program(CCACHE_FOUND ccache)

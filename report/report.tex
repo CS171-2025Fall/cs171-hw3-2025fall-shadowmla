@@ -5,6 +5,14 @@
 \usepackage{listings}
 \usepackage{bm}
 \usepackage{amsmath}
+\usepackage{xcolor}
+
+% Reduce margins for better spacing
+\setlength{\textwidth}{6.5in}
+\setlength{\textheight}{9in}
+\setlength{\oddsidemargin}{0in}
+\setlength{\evensidemargin}{0in}
+\setlength{\topmargin}{0.25in}
 
 \definecolor{blve}{rgb}{0.3372549 , 0.61176471, 0.83921569}
 \definecolor{gr33n}{rgb}{0.29019608, 0.7372549, 0.64705882}
@@ -12,31 +20,357 @@
 \lst@InstallKeywords k{class}{classstyle}\slshape{classstyle}{}ld
 \makeatother
 \lstset{language=C++,
-	basicstyle=\ttfamily,
+	basicstyle=\ttfamily\small,
 	keywordstyle=\color{blve}\ttfamily,
 	stringstyle=\color{red}\ttfamily,
 	commentstyle=\color{magenta}\ttfamily,
 	morecomment=[l][\color{magenta}]{\#},
-	classstyle = \bfseries\color{gr33n}, 
-	tabsize=2
+	classstyle = \bfseries\color{gr33n},
+	tabsize=2,
+	breaklines=true,
+	breakatwhitespace=true,
+	postbreak=\space
 }
-\lstset{basicstyle=\ttfamily}
 
-% Title portion
-\title{Assignment 1:\\ {Exploring OpenGL Programming}} 
+% Title
+\title{CS171 Assignment 3:\\Basic Ray Tracing Implementation}
 
-\author{Name: \quad \\ student number:\
-\\email: \quad \texttt{}}
+\author{Name: Yufei Sun\quad \\ student number: 2022533133\quad
+\\email: sunyf2022@shanghaitech.edu.cn\quad \texttt{}}
 
 % Document starts
 \begin{document}
 \maketitle
 
-\vspace*{2 ex}
+\vspace*{1ex}
 
 \section{Introduction}
+
+This assignment implements core components of a ray-tracing renderer. The main objectives are to:
+
+\begin{itemize}
+	\item Implement ray-triangle and ray-AABB intersection
+	\item Construct and traverse a Bounding Volume Hierarchy (BVH)
+	\item Implement direct illumination with shadows
+	\item Handle refractive materials
+	\item Apply anti-aliasing via multi-ray sampling
+\end{itemize}
+
+The rendered Cornell box demonstrates proper lighting, shadowing, refraction, and anti-aliasing.
+
 \section{Implementation Details}
+
+\subsection{Ray-Triangle Intersection}
+
+\subsubsection{Approach}
+
+The M\"{o}ller-Trumbore algorithm is implemented in \texttt{src/accel.cpp}. The algorithm finds the intersection between a ray and a triangle by solving the parametric equation.
+
+The ray is: $\mathbf{p}(t) = \mathbf{o} + t \cdot \mathbf{d}$
+
+The triangle uses barycentric coordinates:
+$\mathbf{p}(u, v) = (1-u-v)\mathbf{v}_0 + u\mathbf{v}_1 + v\mathbf{v}_2$
+
+At intersection: $\mathbf{o} + t \cdot \mathbf{d} = \mathbf{v}_0 + u(\mathbf{v}_1 - \mathbf{v}_0) + v(\mathbf{v}_2 - \mathbf{v}_0)$
+
+\subsubsection{Key Implementation}
+
+\begin{lstlisting}
+InternalVecType edge1 = v1 - v0;
+InternalVecType h = Cross(dir, v2 - v0);
+Float a = Dot(edge1, h);
+if (abs(a) < 1e-5) return false;
+
+Float f = 1.0 / a;
+InternalVecType s = origin - v0;
+Float u = f * Dot(s, h);
+if (u < 0.0 || u > 1.0) return false;
+
+Float v = f * Dot(dir, Cross(s, edge1));
+if (v < 0.0 || u + v > 1.0) return false;
+
+Float t = f * Dot(v2 - v0, Cross(s, edge1));
+\end{lstlisting}
+
+\subsubsection{Conclusion}
+
+Efficient and numerically stable ray-triangle intersection testing enables fast BVH traversal and accurate scene intersection queries.
+
+\subsection{Ray-AABB Intersection}
+
+\subsubsection{Approach}
+
+The slab method is implemented in the AABB intersect function. The bounding box is treated as the intersection of three infinite slabs along each axis.
+
+For each axis, compute intersection times:
+$t_0 = \frac{\text{low}[i] - \text{orig}[i]}{\text{invdir}[i]}$,
+$t_1 = \frac{\text{high}[i] - \text{orig}[i]}{\text{invdir}[i]}$
+
+\subsubsection{Key Implementation}
+
+\begin{lstlisting}
+Vec3f t0 = (low_bnd - ray.origin) * 
+           ray.safe_inverse_direction;
+Vec3f t1 = (upper_bnd - ray.origin) * 
+           ray.safe_inverse_direction;
+Vec3f t_near = Min(t0, t1);
+Vec3f t_far = Max(t0, t1);
+
+Float t_enter = ReduceMax(t_near);
+Float t_exit = ReduceMin(t_far);
+
+if (t_enter > t_exit) return false;
+*t_in = t_enter;
+*t_out = t_exit;
+return true;
+\end{lstlisting}
+
+\subsubsection{Conclusion}
+
+The slab method provides robust and efficient AABB intersection testing for BVH traversal and ray culling.
+
+\subsection{BVH Construction}
+
+\subsubsection{Approach}
+
+The BVH is built top-down using median heuristic in the bvh tree header file. The algorithm recursively partitions primitives along the axis with largest extent.
+
+\subsubsection{Key Steps}
+
+\begin{enumerate}
+	\item Compute AABB of all primitives in node
+	\item Find split axis (largest extent)
+	\item Partition at centroid median
+	\item Recursively build subtrees
+	\item Mark leaves when reaching capacity or depth limit
+\end{enumerate}
+
+\subsubsection{Conclusion}
+
+Median heuristic provides balanced trees with logarithmic depth, ensuring efficient ray tracing performance.
+
+\subsection{Direct Illumination}
+
+\subsubsection{Approach}
+
+Direct lighting implemented in the integrator. For each diffuse surface:
+
+\begin{enumerate}
+	\item Cast shadow ray to light
+	\item Test occlusion via scene intersection
+	\item If visible, compute diffuse shading
+\end{enumerate}
+
+\subsubsection{Key Implementation}
+
+\begin{lstlisting}
+Vec3f light_dir = 
+  Normalize(point_light_pos - inter.p);
+auto test_ray = DifferentialRay(
+  inter.p, light_dir);
+
+SurfaceInteraction shadow_inter;
+bool occluded = 
+  scene->intersect(test_ray, shadow_inter);
+
+if (occluded) {
+  Float dist_occluder = 
+    Norm(shadow_inter.p - inter.p);
+  Float dist_light = 
+    Norm(light_pos - inter.p);
+  if (dist_occluder < dist_light - eps)
+    return Vec3f(0, 0, 0);
+}
+
+inter.wi = light_dir;
+Float cos_theta = 
+  max(Dot(light_dir, inter.normal), 0.0);
+color = bsdf->evaluate(inter) * 
+  light_intensity * cos_theta;
+\end{lstlisting}
+
+\subsubsection{Conclusion}
+
+Shadow testing with cosine-weighted diffuse shading produces realistic direct illumination with accurate shadows.
+
+\subsection{Perfect Refraction}
+
+\subsubsection{Approach}
+
+Refraction implemented in the BSDF sample function. Applies Snell's law and handles total internal reflection.
+
+\begin{enumerate}
+	\item Determine ray direction (entering/exiting)
+	\item Apply correct refractive index ratio
+	\item Try refraction using Snell's law
+	\item Fall back to total internal reflection
+\end{enumerate}
+
+\subsubsection{Key Implementation}
+
+\begin{lstlisting}
+Vec3f normal = interaction.shading.n;
+Float cos_theta_i = 
+  Dot(normal, interaction.wo);
+bool entering = cos_theta_i > 0;
+Float eta = entering ? eta : 1.0 / eta;
+
+Vec3f oriented_norm = entering ? 
+  normal : -normal;
+Vec3f refracted;
+bool can_refract = Refract(
+  interaction.wo, oriented_norm, eta, 
+  refracted);
+
+if (can_refract) {
+  interaction.wi = refracted;
+} else {
+  interaction.wi = 
+    Reflect(interaction.wo, oriented_norm);
+}
+\end{lstlisting}
+
+\subsubsection{Conclusion}
+
+Correct refraction handling enables realistic transparent material rendering with proper total internal reflection.
+
+\subsection{Anti-Aliasing}
+
+\subsubsection{Approach}
+
+Multi-ray sampling with random offsets within pixel aperture. Each pixel casts spp rays with stratified sampling.
+
+\begin{lstlisting}
+for (int sample = 0; sample < spp; sample++) {
+  const Vec2f &pixel_sample = 
+    sampler.getPixelSample();
+  auto ray = camera->generateDifferentialRay(
+    pixel_sample.x, pixel_sample.y);
+  
+  const Vec3f &L = 
+    Li(scene, ray, sampler);
+  camera->getFilm()->commitSample(
+    pixel_sample, L);
+}
+\end{lstlisting}
+
+\subsubsection{Conclusion}
+
+Monte Carlo integration via multi-sample averaging effectively reduces aliasing artifacts.
+
+\subsection{Integration}
+
+\subsubsection{Ray Tracing Pipeline}
+
+The integrator function integrates all components:
+
+\begin{enumerate}
+	\item Generate rays per pixel with anti-aliasing
+	\item Trace through refractive materials iteratively
+	\item Stop at first diffuse surface
+	\item Compute direct lighting at that surface
+	\item Return accumulated radiance
+\end{enumerate}
+
+\begin{lstlisting}
+for (int i = 0; i < max_depth; ++i) {
+  bool intersected = 
+    scene->intersect(ray, interaction);
+  if (!intersected) break;
+  
+  bool is_refract = 
+    dynamic_cast<PerfectRefraction*>(
+      interaction.bsdf) != nullptr;
+  
+  if (is_refract) {
+    Float pdf;
+    interaction.bsdf->sample(
+      interaction, sampler, &pdf);
+    ray = interaction.spawnRay(
+      interaction.wi);
+    continue;
+  }
+  
+  bool is_diffuse = 
+    dynamic_cast<IdealDiffusion*>(
+      interaction.bsdf) != nullptr;
+  
+  if (is_diffuse) {
+    return directLighting(
+      scene, interaction);
+  }
+}
+\end{lstlisting}
+
+\subsubsection{Conclusion}
+
+Complete pipeline traces rays through transparent materials and computes illumination at diffuse surfaces correctly.
+
 \section{Results}
+
+\subsection{Cornell Box Direct Illumination}
+
+This section demonstrates the basic ray tracing with direct illumination from a point light source and shadow computation.
+
+\begin{figure}[h]
+	\centering
+	\includegraphics[width=0.4\textwidth]{cbox_no_light.png}
+	\caption{Cornell box with direct illumination.}
+	\label{fig:cbox_light}
+\end{figure}
+
+\textbf{Observations:}
+\begin{itemize}
+	\item Clear shadow boundaries from occlusion testing
+	\item Proper diffuse shading with cosine weighting
+	\item Realistic light falloff from point source
+	\item BVH acceleration enables fast rendering
+\end{itemize}
+
+\subsection{Refraction with Glass Pane}
+
+This section shows the same scene with a refractive glass pane.
+
+\begin{figure}[h]
+	\centering
+	\includegraphics[width=0.4\textwidth]{cbox_no_light_refract.png}
+	\caption{Cornell box with refraction through glass.}
+	\label{fig:cbox_refract}
+\end{figure}
+
+\textbf{Observations:}
+\begin{itemize}
+	\item Visible refraction effects through glass
+	\item Proper ray tracing through transparent materials
+	\item Accurate shadow computation with refracted rays
+	\item Total internal reflection where applicable
+	\item Smooth anti-aliasing from multi-sample rendering
+\end{itemize}
+
+\subsection{Performance Metrics}
+
+\begin{itemize}
+	\item Resolution: 256$\times$256 pixels
+	\item Samples per pixel: 4 or higher
+	\item Ray depth: Up to 16 for refractive materials
+	\item BVH depth: Logarithmic via median heuristic
+	\item Parallelization: OpenMP multi-core acceleration
+\end{itemize}
+
+\section{Conclusion}
+
+This assignment successfully implements a functional ray tracer with the following components:
+
+\begin{enumerate}
+	\item Robust ray-primitive intersection
+	\item Efficient BVH acceleration structure
+	\item Direct illumination with shadows
+	\item Transparent material refraction
+	\item Anti-aliasing via multi-sampling
+	\item Parallel rendering support
+\end{enumerate}
+
+All components integrate correctly to produce realistic images with proper lighting, shadowing, refraction, and anti-aliasing effects. The renderer successfully handles complex scenes with multiple material types.
 
 \end{document}
 

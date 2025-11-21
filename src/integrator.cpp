@@ -58,11 +58,17 @@ void IntersectionTestIntegrator::render(ref<Camera> camera, ref<Scene> scene) {
         // following lines to accumulate the radiance to the film.
         //
         //
+        // Generate pixel sample with offset for anti-aliasing
+        const Vec2f &pixel_sample = sampler.getPixelSample();
+        
+        // Generate the differential ray
+        auto ray = camera->generateDifferentialRay(pixel_sample.x, pixel_sample.y);
+        
         // Accumulate radiance
-        // assert(pixel_sample.x >= dx && pixel_sample.x <= dx + 1);
-        // assert(pixel_sample.y >= dy && pixel_sample.y <= dy + 1);
-        // const Vec3f &L = Li(scene, ray, sampler);
-        // camera->getFilm()->commitSample(pixel_sample, L);
+        assert(pixel_sample.x >= dx && pixel_sample.x <= dx + 1);
+        assert(pixel_sample.y >= dy && pixel_sample.y <= dy + 1);
+        const Vec3f &L = Li(scene, ray, sampler);
+        camera->getFilm()->commitSample(pixel_sample, L);
       }
     }
   }
@@ -104,7 +110,14 @@ Vec3f IntersectionTestIntegrator::Li(
       // @see SurfaceInteraction::spawnRay
       //
       // You should update ray = ... with the spawned ray
-      UNIMPLEMENTED;
+
+      // Sample the BSDF to get the refraction/reflection direction
+      Float pdf;
+      interaction.bsdf->sample(interaction, sampler, &pdf);
+      // interaction.wi is now set by the sample function
+      
+      // Spawn a new ray from the interaction point
+      ray = interaction.spawnRay(interaction.wi);
       continue;
     }
 
@@ -148,7 +161,19 @@ Vec3f IntersectionTestIntegrator::directLighting(
   //
   //    You can use iteraction.p to get the intersection position.
   //
-  UNIMPLEMENTED;
+
+  // Test for occlusion
+  SurfaceInteraction shadow_interaction;
+  bool occluded = scene->intersect(test_ray, shadow_interaction);
+  
+  // Check if the intersection is between the surface and the light
+  if (occluded) {
+    Float dist_to_occluder = Norm(shadow_interaction.p - interaction.p);
+    if (dist_to_occluder < dist_to_light - 1e-4F) {
+      // Occluded, return black
+      return color;
+    }
+  }
 
   // Not occluded, compute the contribution using perfect diffuse diffuse model
   // Perform a quick and dirty check to determine whether the BSDF is ideal
@@ -164,13 +189,21 @@ Vec3f IntersectionTestIntegrator::directLighting(
     // radiometry-accurate model, so a simple phong-shading-like model is can be
     // used to determine the value of color.
 
+    // Compute the contribution using diffuse shading
+    // Set the incoming direction for BSDF evaluation
+    interaction.wi = light_dir;
+    
     // The angle between light direction and surface normal
     Float cos_theta =
-        std::max(Dot(light_dir, interaction.normal), 0.0f);  // one-sided
+        std::max(Dot(light_dir, interaction.normal), 0.0F);  // one-sided
 
     // You should assign the value to color
     // color = ...
-    UNIMPLEMENTED;
+
+    // Compute color using BSDF evaluation and light contribution
+    // Simple Phong-like shading: color = albedo * light_flux * cos_theta / dist^2
+    Vec3f albedo = bsdf->evaluate(interaction);
+    color = albedo * point_light_flux * cos_theta / (dist_to_light * dist_to_light);
   }
 
   return color;
@@ -183,8 +216,33 @@ Vec3f IntersectionTestIntegrator::directLighting(
  * ===================================================================== */
 
 void PathIntegrator::render(ref<Camera> camera, ref<Scene> scene) {
-  // This is left as the next assignment
-  UNIMPLEMENTED;
+  // Statistics
+  std::atomic<int> cnt = 0;
+
+  const Vec2i &resolution = camera->getFilm()->getResolution();
+#pragma omp parallel for schedule(dynamic)
+  for (int dx = 0; dx < resolution.x; dx++) {
+    ++cnt;
+    if (cnt % (resolution.x / 10) == 0)
+      Info_("Rendering: {:.02f}%", cnt * 100.0 / resolution.x);
+    Sampler sampler;
+    for (int dy = 0; dy < resolution.y; dy++) {
+      sampler.setPixelIndex2D(Vec2i(dx, dy));
+      for (int sample = 0; sample < spp; sample++) {
+        // Get the pixel sample position
+        const Vec2f &pixel_sample = sampler.getPixelSample();
+        
+        // Generate the differential ray
+        auto ray = camera->generateDifferentialRay(pixel_sample.x, pixel_sample.y);
+        
+        // Compute radiance
+        const Vec3f &L = Li(scene, ray, sampler);
+        
+        // Commit sample to film
+        camera->getFilm()->commitSample(pixel_sample, L);
+      }
+    }
+  }
 }
 
 Vec3f PathIntegrator::Li(

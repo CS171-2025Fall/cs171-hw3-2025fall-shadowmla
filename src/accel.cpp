@@ -43,7 +43,31 @@ bool AABB::intersect(const Ray &ray, Float *t_in, Float *t_out) const {
   //    for getting the inverse direction of the ray.
   // @see Min/Max/ReduceMin/ReduceMax
   //    for vector min/max operations.
-  UNIMPLEMENTED;
+  
+  // Use the slab method for ray-AABB intersection
+  // For each axis, compute the intersection times with the two planes
+  Vec3f t0 = (low_bnd - ray.origin) * ray.safe_inverse_direction;
+  Vec3f t1 = (upper_bnd - ray.origin) * ray.safe_inverse_direction;
+  
+  // Make sure t0 has the near intersection and t1 has the far intersection
+  Vec3f t_near = Min(t0, t1);
+  Vec3f t_far = Max(t0, t1);
+  
+  // Find the largest t_near and smallest t_far across all axes
+  Float t_enter = ReduceMax(t_near);
+  Float t_exit = ReduceMin(t_far);
+  
+  // Check if there's a valid intersection
+  // The ray intersects the AABB if t_enter <= t_exit
+  if (t_enter > t_exit) {
+    return false;
+  }
+  
+  // Set the output parameters
+  *t_in = t_enter;
+  *t_out = t_exit;
+  
+  return true;
 }
 
 /* ===================================================================== *
@@ -91,11 +115,58 @@ bool TriangleIntersect(Ray &ray, const uint32_t &triangle_index,
   // Useful Functions:
   // You can use @see Cross and @see Dot for determinant calculations.
 
-  // Delete the following lines after you implement the function
-  InternalScalarType u = InternalScalarType(0);
-  InternalScalarType v = InternalScalarType(0);
-  InternalScalarType t = InternalScalarType(0);
-  UNIMPLEMENTED;
+  // Möller–Trumbore intersection algorithm
+  // Solve: origin + t*dir = (1-u-v)*v0 + u*v1 + v*v2
+  // Rearranged: origin + t*dir = v0 + u*(v1-v0) + v*(v2-v0)
+  // So: t*dir = (v0 - origin) + u*(v1-v0) + v*(v2-v0)
+  // Or: -t*dir + u*e1 + v*e2 = origin - v0
+  // Matrix form: [-dir, e1, e2] * [t, u, v]^T = origin - v0
+  
+  InternalVecType origin = Cast<InternalScalarType>(ray.origin);
+  InternalVecType e1 = v1 - v0;
+  InternalVecType e2 = v2 - v0;
+  InternalVecType s = origin - v0;
+  
+  // Calculate pvec = dir × e2
+  InternalVecType pvec = Cross(dir, e2);
+  
+  // Calculate determinant = e1 · (dir × e2) = e1 · pvec
+  InternalScalarType det = Dot(e1, pvec);
+  
+  // If determinant is near zero, ray is parallel to triangle
+  if (abs(det) < InternalScalarType(1e-10)) {
+    return false;
+  }
+  
+  InternalScalarType inv_det = InternalScalarType(1) / det;
+  
+  // Calculate u = (s · pvec) / det
+  InternalScalarType u = Dot(s, pvec) * inv_det;
+  
+  // Check if u is in valid range [0, 1]
+  if (u < InternalScalarType(0) || u > InternalScalarType(1)) {
+    return false;
+  }
+  
+  // Calculate qvec = s × e1
+  InternalVecType qvec = Cross(s, e1);
+  
+  // Calculate v = (dir · qvec) / det
+  InternalScalarType v = Dot(dir, qvec) * inv_det;
+  
+  // Check if v is in valid range and u+v <= 1
+  if (v < InternalScalarType(0) || u + v > InternalScalarType(1)) {
+    return false;
+  }
+  
+  // Calculate t = (e2 · qvec) / det
+  InternalScalarType t = Dot(e2, qvec) * inv_det;
+  
+  // Check if intersection is within ray's valid range
+  if (t < static_cast<InternalScalarType>(ray.t_min) || 
+      t > static_cast<InternalScalarType>(ray.t_max)) {
+    return false;
+  }
 
   // We will reach here if there is an intersection
 

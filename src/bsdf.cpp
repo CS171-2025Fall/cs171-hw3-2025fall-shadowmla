@@ -104,7 +104,20 @@ Vec3f PerfectRefraction::sample(
   // @see Refract for refraction calculation.
   // @see Reflect for reflection calculation.
 
-  UNIMPLEMENTED;
+  // Flip normal if exiting the medium
+  Vec3f oriented_normal = entering ? normal : -normal;
+  
+  // Try to refract
+  Vec3f refracted;
+  bool can_refract = Refract(interaction.wo, oriented_normal, eta_corrected, refracted);
+  
+  if (can_refract) {
+    // Refraction occurs
+    interaction.wi = refracted;
+  } else {
+    // Total internal reflection
+    interaction.wi = Reflect(interaction.wo, oriented_normal);
+  }
 
   // Set the pdf and return value, we dont need to understand the value now
   if (pdf != nullptr) *pdf = 1.0F;

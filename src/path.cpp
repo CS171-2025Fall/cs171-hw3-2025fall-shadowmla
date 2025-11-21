@@ -12,8 +12,70 @@ RDR_NAMESPACE_BEGIN
  */
 
 Vec3f Path::estimate() const {
-  // This is left as the next assignment
-  UNIMPLEMENTED;
+  // Handle case when there is no interaction
+  if (this->length() == 0) {
+    return Vec3f(0.0);
+  }
+  
+  // Handle case when length == 1 (direct emission from light source)
+  if (this->length() == 1) {
+    const SurfaceInteraction &interaction = interactions[0];
+    if (interaction.isLight()) {
+      // Return the emitted radiance Le in the direction wo
+      return interaction.light->Le(interaction, interaction.wo) * mis_weight * rr_weight;
+    }
+    return Vec3f(0.0);
+  }
+  
+  // General case: calculate throughput T and Li
+  Vec3f result(0.0);
+  Vec3f throughput(1.0);
+  
+  // Iterate through all interactions except the last one
+  for (size_t i = 0; i < interactions.size() - 1; ++i) {
+    SurfaceInteraction interaction = interactions[i];
+    const SurfaceInteraction &next_interaction = interactions[i + 1];
+    
+    // Get the BSDF value
+    const Vec3f &brdf = interaction.isSpecular()
+                          ? interaction.bsdf_cache
+                          : interaction.bsdf->evaluate(interaction);
+    
+    // Get the PDF in solid angle measure
+    const Float &pdf = toPdfMeasure(next_interaction, interaction, EMeasure::ESolidAngle);
+    
+    // Check for invalid PDF
+    if (!IsAllValid(pdf) || pdf <= 0) {
+      return Vec3f(0.0);
+    }
+    
+    // Get the cosine term
+    const Float &cos_term = std::abs(interaction.cosThetaI());
+    
+    // Update throughput: T *= f(x_i, wi, wo) * |cos(theta)| / pdf
+    throughput *= brdf * cos_term / pdf;
+    
+    // Validate throughput
+    AssertAllValid(throughput);
+    AssertAllNonNegative(throughput);
+  }
+  
+  // The last interaction should be a light source
+  const SurfaceInteraction &last_interaction = interactions.back();
+  if (last_interaction.isLight()) {
+    // Get emitted radiance from the light
+    const Vec3f &emitted = last_interaction.light->Le(last_interaction, last_interaction.wo);
+    
+    // Calculate result = Le * throughput
+    result = emitted * throughput;
+    
+    // Validate result
+    AssertAllValid(result);
+    AssertAllNonNegative(result);
+  }
+  
+  // Apply MIS weight and RR weight
+  return result * mis_weight * rr_weight;
 }
 
 bool Path::verify() const {

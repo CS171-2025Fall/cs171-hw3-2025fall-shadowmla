@@ -48,6 +48,21 @@ compile_commands.json
 .clangd
 .zed/
 
+report/*.aux
+report/*.fdb_latexmk
+report/*.fls
+report/*.log
+report/*.synctex.gz
+report/*.toc
+report/*.lof
+report/*.lot
+report/*.out
+report/*.bbl
+report/*.blg
+report/*.bcf
+report/*.run.xml
+report/*.fot
+
 # mitsuba
 *.exr
 *.svg
